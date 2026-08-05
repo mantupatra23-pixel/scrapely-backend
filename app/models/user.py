@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 from sqlalchemy import String, Boolean, Enum, ForeignKey, Integer, Text, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
@@ -15,6 +15,7 @@ class UserRole(str, enum.Enum):
 
 class User(Base, BaseMixin):
     __tablename__ = "users"
+    __table_args__ = {'extend_existing': True}
 
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -23,25 +24,25 @@ class User(Base, BaseMixin):
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.MEMBER, nullable=False)
 
-    # Relationships
     memberships = relationship("Membership", back_populates="user", cascade="all, delete-orphan")
     api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
 
 
 class Organization(Base, BaseMixin):
     __tablename__ = "organizations"
+    __table_args__ = {'extend_existing': True}
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
-    # Relationships
     memberships = relationship("Membership", back_populates="organization", cascade="all, delete-orphan")
     subscriptions = relationship("Subscription", back_populates="organization", cascade="all, delete-orphan")
 
 
 class Membership(Base, BaseMixin):
     __tablename__ = "memberships"
+    __table_args__ = {'extend_existing': True}
 
     user_id: Mapped[BaseMixin.id] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     organization_id: Mapped[BaseMixin.id] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
@@ -53,6 +54,7 @@ class Membership(Base, BaseMixin):
 
 class Lead(Base, BaseMixin):
     __tablename__ = "leads"
+    __table_args__ = {'extend_existing': True}
 
     company_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
