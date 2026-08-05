@@ -10,6 +10,7 @@ from app.api.v1 import (
     billing,
     api_keys,
     exports,
+    intelligence,
 )
 
 # Automatic Database Table Creation on Startup
@@ -19,11 +20,12 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     yield
 
+
 app = FastAPI(
     title=settings.APP_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     debug=settings.DEBUG,
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # CORS Configuration
@@ -41,6 +43,8 @@ app.include_router(leads.router, prefix=settings.API_V1_STR)
 app.include_router(billing.router, prefix=settings.API_V1_STR)
 app.include_router(api_keys.router, prefix=settings.API_V1_STR)
 app.include_router(exports.router, prefix=settings.API_V1_STR)
+app.include_router(intelligence.router, prefix=settings.API_V1_STR)
+
 
 @app.get("/", tags=["Health"])
 async def root():
@@ -51,12 +55,13 @@ async def root():
         "version": "1.0.0",
         "status": "healthy",
         "docs": "/docs",
-        "openapi": f"{settings.API_V1_STR}/openapi.json"
+        "openapi": f"{settings.API_V1_STR}/openapi.json",
     }
+
 
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {
         "status": "healthy",
-        "service": settings.APP_NAME
+        "service": settings.APP_NAME,
     }
