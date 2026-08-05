@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.config.settings import settings
 from app.db.session import engine, Base
@@ -13,11 +14,38 @@ from app.api.v1 import (
     intelligence,
 )
 
-# Automatic Database Table Creation on Startup
+# Automatic Column Auto-Migration on Startup
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
+        # Create missing tables
         await conn.run_sync(Base.metadata.create_all)
+        
+        # Auto-inject missing columns into PostgreSQL DB table
+        alter_queries = [
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_score INTEGER DEFAULT 0 NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_priority VARCHAR(20) DEFAULT 'LOW' NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS seo_score INTEGER DEFAULT 0 NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_status VARCHAR(30) DEFAULT 'UNKNOWN' NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS ssl_enabled BOOLEAN DEFAULT FALSE NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS mobile_friendly BOOLEAN DEFAULT FALSE NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS page_speed INTEGER DEFAULT 0 NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS meta_title TEXT;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS meta_description TEXT;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS robots_found BOOLEAN DEFAULT FALSE NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS sitemap_found BOOLEAN DEFAULT FALSE NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS schema_found BOOLEAN DEFAULT FALSE NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS domain_age INTEGER DEFAULT 0;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS ai_summary TEXT;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_audit_at TIMESTAMP WITH TIME ZONE;"
+        ]
+        
+        for q in alter_queries:
+            try:
+                await conn.execute(text(q))
+            except Exception as e:
+                print(f"[Auto-Migration Log] {e}")
+                
     yield
 
 
