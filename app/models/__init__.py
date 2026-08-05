@@ -14,5 +14,5 @@ __all__ = [
     "APIKey",
     "Subscription",
     "SubscriptionStatus",
-    "Lead"
+    "Lead",
 ]
