@@ -1,7 +1,9 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config.settings import settings
+from app.db.session import engine, Base
 from app.api.v1 import (
     auth,
     leads,
@@ -10,16 +12,24 @@ from app.api.v1 import (
     exports,
 )
 
+# Automatic Database Table Creation on Startup
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+
 app = FastAPI(
     title=settings.APP_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     debug=settings.DEBUG,
+    lifespan=lifespan
 )
 
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Production me specific domains use karein
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,7 +42,6 @@ app.include_router(billing.router, prefix=settings.API_V1_STR)
 app.include_router(api_keys.router, prefix=settings.API_V1_STR)
 app.include_router(exports.router, prefix=settings.API_V1_STR)
 
-
 @app.get("/", tags=["Health"])
 async def root():
     return {
@@ -42,13 +51,12 @@ async def root():
         "version": "1.0.0",
         "status": "healthy",
         "docs": "/docs",
-        "openapi": f"{settings.API_V1_STR}/openapi.json",
+        "openapi": f"{settings.API_V1_STR}/openapi.json"
     }
-
 
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {
         "status": "healthy",
-        "service": settings.APP_NAME,
+        "service": settings.APP_NAME
     }
