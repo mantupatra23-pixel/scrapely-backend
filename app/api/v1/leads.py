@@ -10,6 +10,7 @@ from app.models.enterprise_lead import Lead, EmailStatusEnum, LeadPriorityEnum, 
 from app.schemas.lead import PaginatedLeadsResponse, LeadResponseSchema
 from app.services.enterprise_scraper import EnterpriseScraperEngine
 from app.services.tech_analyzer import TechnologyAnalyzerEngine
+from app.schemas.lead import PaginatedLeadsResponse, LeadResponseSchema
 
 router = APIRouter(prefix="/leads", tags=["Lead Intelligence Engine"])
 

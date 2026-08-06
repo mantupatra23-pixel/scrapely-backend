@@ -1,31 +1,37 @@
-import uuid
-from pydantic import BaseModel
+from pydantic import BaseModel, HttpUrl
 from typing import Optional, List
 
+
 class LeadBase(BaseModel):
+    google_place_id: Optional[str] = None
     company_name: str
     website: Optional[str] = None
     phone: Optional[str] = None
-    email: Optional[str] = None
+    verified_email: Optional[str] = None
+    email_status: Optional[str] = "unverified"
     address: Optional[str] = None
     city: Optional[str] = None
-    category: Optional[str] = None
-    rating: Optional[float] = None
+    country: Optional[str] = None
+    google_rating: Optional[float] = 0.0
     reviews_count: Optional[int] = 0
-    source: str = "google_maps"
+    lead_score: Optional[int] = 50
+    seo_score: Optional[int] = 50
 
-class LeadResponse(LeadBase):
-    id: uuid.UUID
+
+class LeadCreate(LeadBase):
+    pass
+
+
+# Exact Schema required by app/api/v1/leads.py
+class LeadResponseSchema(LeadBase):
+    id: str
 
     class Config:
         from_attributes = True
 
-class LeadSearchRequest(BaseModel):
-    query: str
-    limit: int = 10
 
 class PaginatedLeadsResponse(BaseModel):
     total: int
     page: int
     limit: int
-    leads: List[LeadResponse]
+    leads: List[LeadResponseSchema]
