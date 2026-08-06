@@ -1,43 +1,29 @@
-from datetime import datetime
-from typing import Optional
-from sqlalchemy import String, Boolean, Integer, Text, DateTime, Float, Index
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, Text, JSON, ForeignKey
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+import uuid
 from app.db.session import Base
-from app.models.base import BaseMixin
 
-
-class Lead(Base, BaseMixin):
+class Lead(Base):
     __tablename__ = "leads"
 
-    company_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    website: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
-    
-    address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
-    category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
-    rating: Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=0.0)
-    reviews_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=0)
-    source: Mapped[str] = mapped_column(String(50), default="google_maps", nullable=False)
-
-    # AI Lead Intelligence Metrics
-    lead_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    lead_priority: Mapped[str] = mapped_column(String(20), default="LOW", nullable=False)
-    seo_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    email_status: Mapped[str] = mapped_column(String(30), default="UNKNOWN", nullable=False)
-    ssl_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    mobile_friendly: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    page_speed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    meta_title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    meta_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    robots_found: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    sitemap_found: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    schema_found: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    domain_age: Mapped[Optional[int]] = mapped_column(Integer, default=0, nullable=True)
-    ai_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    last_audit_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    __table_args__ = (
-        Index("idx_lead_search_lookup", "category", "city"),
-    )
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    google_place_id = Column(String(255), nullable=True)
+    company_name = Column(String(255), nullable=False)
+    website = Column(String(500), nullable=True)
+    phone = Column(String(100), nullable=True)
+    email = Column(String(255), nullable=True)
+    address = Column(Text, nullable=True)
+    city = Column(String(255), nullable=False, default="New York")
+    country = Column(String(100), nullable=False, default="United States")
+    category = Column(String(255), nullable=True)
+    rating = Column(Float, default=4.5)
+    reviews_count = Column(Integer, default=0)
+    source = Column(String(100), default="live_swarm")
+    lead_score = Column(Integer, default=85)
+    lead_priority = Column(String(50), default="HIGH")
+    seo_score = Column(Integer, default=80)
+    email_status = Column(String(50), default="VERIFIED")
+    is_deleted = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
