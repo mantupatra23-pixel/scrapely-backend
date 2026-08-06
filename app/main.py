@@ -6,7 +6,6 @@ from sqlalchemy import text
 
 from app.config.settings import settings
 from app.db.session import engine, Base
-from app.models import Lead
 from app.api.v1 import (
     auth,
     leads,
@@ -19,26 +18,19 @@ from app.api.v1 import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Base table structure initialization
+    # Initialize base metadata schema
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # 2. Dynamic Auto-Migration Queries for Enterprise Schema Alignment
-    alter_queries = [
+    # Auto-Migration Pipeline
+    migration_queries = [
+        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'emailstatusenum') THEN CREATE TYPE emailstatusenum AS ENUM ('VALID', 'VERIFIED', 'INVALID', 'RISKY', 'NOT_FOUND'); END IF; END $$;",
+        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'leadpriorityenum') THEN CREATE TYPE leadpriorityenum AS ENUM ('HIGH', 'MEDIUM', 'LOW'); END IF; END $$;",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS workspace_id UUID;",
-        "ALTER TYPE emailvalidationstatus ADD VALUE IF NOT EXISTS 'VERIFIED';"
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone_formatted VARCHAR(100);",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone_country_code VARCHAR(10);",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_mobile BOOLEAN DEFAULT FALSE;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS has_whatsapp BOOLEAN DEFAULT FALSE;",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS verified_email VARCHAR(255);",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_source VARCHAR(100);",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_syntax_valid BOOLEAN DEFAULT FALSE;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_mx_valid BOOLEAN DEFAULT FALSE;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_smtp_valid BOOLEAN DEFAULT FALSE;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_is_disposable BOOLEAN DEFAULT FALSE;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_is_catch_all BOOLEAN DEFAULT FALSE;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_is_role_based BOOLEAN DEFAULT FALSE;",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS state VARCHAR(255);",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS postal_code VARCHAR(50);",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS latitude FLOAT;",
@@ -47,29 +39,24 @@ async def lifespan(app: FastAPI):
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS business_status VARCHAR(100) DEFAULT 'OPERATIONAL';",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS opening_hours JSONB;",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS primary_category VARCHAR(255);",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS secondary_categories JSONB;",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_maps_url TEXT;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS directions_url TEXT;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS photos_url TEXT;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS business_description TEXT;",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS seo_audit_details JSONB;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS tech_stack JSONB;",
         "ALTER TABLE leads ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;"
     ]
 
-    for q in alter_queries:
+    for query in migration_queries:
         try:
             async with engine.begin() as conn:
-                await conn.execute(text(q))
-        except Exception as e:
+                await conn.execute(text(query))
+        except Exception:
             pass
 
     yield
 
 
 app = FastAPI(
-    title=settings.APP_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    title="Scrapely.ai Enterprise Lead Engine",
+    openapi_url="/api/v1/openapi.json",
     debug=settings.DEBUG,
     lifespan=lifespan,
 )
@@ -104,16 +91,6 @@ app.include_router(intelligence.router, prefix=settings.API_V1_STR)
 async def root():
     return {
         "success": True,
-        "application": settings.APP_NAME,
-        "message": "Scrapely Enterprise Engine is running 🚀",
+        "application": "Scrapely.ai Live Enterprise Engine",
         "status": "healthy",
-    }
-
-
-@app.get("/health", tags=["Health"])
-async def health_check():
-    return {
-        "status": "healthy",
-        "service": settings.APP_NAME,
-        "timestamp": time.time(),
     }

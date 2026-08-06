@@ -1,15 +1,14 @@
 import asyncio
 import re
 import urllib.parse
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import httpx
 from bs4 import BeautifulSoup
 from app.config.settings import settings
 
 
 class EnterpriseScraperEngine:
-    # Strict Geo-Pipeline Configurations for Supported Countries
-    COUNTRY_MAP = {
+    SUPPORTED_COUNTRIES = {
         "United States": {"code": "US", "gl": "us", "hl": "en", "tld": "com", "prefix": "+1"},
         "India": {"code": "IN", "gl": "in", "hl": "en", "tld": "co.in", "prefix": "+91"},
         "United Kingdom": {"code": "GB", "gl": "uk", "hl": "en", "tld": "co.uk", "prefix": "+44"},
@@ -21,31 +20,60 @@ class EnterpriseScraperEngine:
     async def run_live_pipeline(
         cls, keyword: str, city: str, country: str, limit: int = 20
     ) -> List[Dict[str, Any]]:
-        country_cfg = cls.COUNTRY_MAP.get(
-            country, {"code": "US", "gl": "us", "hl": "en", "tld": "com", "prefix": "+1"}
-        )
+        country_cfg = cls.SUPPORTED_COUNTRIES.get(country)
+        if not country_cfg:
+            return []
 
-        # Stage 1: Primary Fetch via Google Places Text Search API
-        places = await cls._fetch_google_places(keyword, city, country, country_cfg, limit)
+        # Step 1: Geocoding Validation
+        coords = await cls._geocode_location(city, country, country_cfg)
+        
+        # Step 2: Primary Search - Google Places API
+        raw_places = await cls._fetch_google_places(keyword, city, country, country_cfg, limit, coords)
 
-        # Stage 2: Fallback to OpenStreetMap / Overpass API if Places yields low records
-        if len(places) < limit:
-            osm_places = await cls._fetch_overpass_osm(
-                keyword, city, country, country_cfg, limit - len(places)
-            )
-            places.extend(osm_places)
+        # Step 3: Secondary Fallback - OpenStreetMap Overpass (Strictly Live Entities Only)
+        if len(raw_places) < limit:
+            osm_places = await cls._fetch_overpass_osm(keyword, city, country, country_cfg, limit - len(raw_places))
+            raw_places.extend(osm_places)
 
-        # Stage 3: Deep Enrichment Engine (Details, Email, SEO, Verification)
+        if not raw_places:
+            return []
+
+        # Step 4: Live Verification, SEO Audit, and Lead Scoring
         enriched_leads = []
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            tasks = [cls._enrich_single_place(client, place, country_cfg) for place in places[:limit]]
+            tasks = [cls._enrich_place_entity(client, place, country_cfg) for place in raw_places[:limit]]
             enriched_leads = await asyncio.gather(*tasks)
 
-        return enriched_leads
+        # Deduplicate results based on google_place_id or website
+        return cls._deduplicate(enriched_leads)
+
+    @classmethod
+    async def _geocode_location(
+        cls, city: str, country: str, country_cfg: dict
+    ) -> Optional[Tuple[float, float]]:
+        if not getattr(settings, "GOOGLE_MAPS_API_KEY", None):
+            return None
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
+        params = {
+            "address": f"{city}, {country}",
+            "key": settings.GOOGLE_MAPS_API_KEY,
+            "region": country_cfg["gl"]
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                res = await client.get(url, params=params)
+                if res.status_code == 200:
+                    results = res.json().get("results", [])
+                    if results:
+                        loc = results[0]["geometry"]["location"]
+                        return loc["lat"], loc["lng"]
+        except Exception:
+            pass
+        return None
 
     @classmethod
     async def _fetch_google_places(
-        cls, keyword: str, city: str, country: str, country_cfg: dict, limit: int
+        cls, keyword: str, city: str, country: str, country_cfg: dict, limit: int, coords: Optional[Tuple[float, float]]
     ) -> List[Dict[str, Any]]:
         if not getattr(settings, "GOOGLE_MAPS_API_KEY", None):
             return []
@@ -57,27 +85,40 @@ class EnterpriseScraperEngine:
             "language": country_cfg["hl"],
             "region": country_cfg["gl"],
         }
+        if coords:
+            params["location"] = f"{coords[0]},{coords[1]}"
+            params["radius"] = "25000"
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(url, params=params)
-            if res.status_code == 200:
-                data = res.json()
-                results = []
-                for item in data.get("results", [])[:limit]:
-                    results.append({
-                        "google_place_id": item.get("place_id"),
-                        "company_name": item.get("name"),
-                        "address": item.get("formatted_address"),
-                        "latitude": item.get("geometry", {}).get("location", {}).get("lat"),
-                        "longitude": item.get("geometry", {}).get("location", {}).get("lng"),
-                        "google_rating": item.get("rating", 0.0),
-                        "reviews_count": item.get("user_ratings_total", 0),
-                        "primary_category": keyword.title(),
-                        "city": city,
-                        "country": country,
-                        "google_maps_url": f"https://www.google.com/maps/place/?q=place_id:{item.get('place_id')}",
-                    })
-                return results
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.get(url, params=params)
+                if res.status_code == 200:
+                    data = res.json()
+                    results = []
+                    for item in data.get("results", []):
+                        # Strict City Matching Check
+                        formatted_addr = item.get("formatted_address", "")
+                        if city.lower() not in formatted_addr.lower() and country.lower() not in formatted_addr.lower():
+                            continue
+
+                        results.append({
+                            "google_place_id": item.get("place_id"),
+                            "company_name": item.get("name"),
+                            "address": formatted_addr,
+                            "latitude": item.get("geometry", {}).get("location", {}).get("lat"),
+                            "longitude": item.get("geometry", {}).get("location", {}).get("lng"),
+                            "google_rating": item.get("rating", 0.0),
+                            "reviews_count": item.get("user_ratings_total", 0),
+                            "primary_category": keyword.title(),
+                            "city": city,
+                            "country": country,
+                            "google_maps_url": f"https://www.google.com/maps/place/?q=place_id:{item.get('place_id')}",
+                        })
+                        if len(results) >= limit:
+                            break
+                    return results
+        except Exception:
+            pass
         return []
 
     @classmethod
@@ -113,8 +154,8 @@ class EnterpriseScraperEngine:
                             "city": city,
                             "country": country,
                             "primary_category": keyword.title(),
-                            "google_rating": 4.5,
-                            "reviews_count": 15,
+                            "google_rating": 0.0,
+                            "reviews_count": 0,
                         })
                         if len(results) >= limit:
                             break
@@ -123,38 +164,43 @@ class EnterpriseScraperEngine:
         return results
 
     @classmethod
-    async def _enrich_single_place(
+    async def _enrich_place_entity(
         cls, client: httpx.AsyncClient, place: Dict[str, Any], country_cfg: dict
     ) -> Dict[str, Any]:
-        # Fetch Details via Place Details API if available
-        if place["google_place_id"].startswith("gmap_") or not place["google_place_id"].startswith("osm_"):
-            place = await cls._fetch_place_details(client, place)
+        # Step A: Fetch Live Details from Place Details API
+        if not place["google_place_id"].startswith("osm_"):
+            place = await cls._fetch_google_place_details(client, place)
 
         website = place.get("website")
-        email = None
-        email_status = "UNKNOWN"
+        phone = place.get("phone")
 
-        # Email Discovery Cascade: Hunter.io -> Direct Web Crawl
+        # Step B: Live Email Discovery (Hunter.io API -> Web Crawl)
+        verified_email = None
+        email_status = "NOT_FOUND"
+
         if website:
-            email = await cls._discover_email_hunter(client, website)
-            if not email:
-                email = await cls._crawl_website_for_email(client, website)
+            verified_email = await cls._discover_hunter_email(client, website)
+            if not verified_email:
+                verified_email = await cls._crawl_website_email(client, website)
 
-        # Email Validation Cascade
-        if email:
-            email_status = await cls._validate_email_mx(email)
-        else:
-            email_status = "NOT FOUND"
+            if verified_email:
+                email_status = await cls._verify_email_mx(verified_email)
+            else:
+                email_status = "NOT_FOUND"
 
-        place["verified_email"] = email
+        # Step C: Live SEO & Technical Audit
+        seo_audit = await cls._audit_website_seo(client, website) if website else {"seo_score": 0, "ssl": False}
+
+        place["verified_email"] = verified_email
         place["email_status"] = email_status
-        place["seo_score"] = 85 if website else 30
-        place["lead_score"] = cls._calculate_lead_score(place)
-        
+        place["seo_score"] = seo_audit.get("seo_score", 0)
+        place["seo_audit_details"] = seo_audit
+        place["lead_score"] = cls._compute_lead_score(place, seo_audit)
+
         return place
 
     @classmethod
-    async def _fetch_place_details(cls, client: httpx.AsyncClient, place: dict) -> dict:
+    async def _fetch_google_place_details(cls, client: httpx.AsyncClient, place: dict) -> dict:
         if not getattr(settings, "GOOGLE_MAPS_API_KEY", None):
             return place
 
@@ -168,16 +214,17 @@ class EnterpriseScraperEngine:
             res = await client.get(url, params=params)
             if res.status_code == 200:
                 result = res.json().get("result", {})
-                place["website"] = place.get("website") or result.get("website")
-                place["phone"] = result.get("international_phone_number") or result.get("formatted_phone_number")
+                place["website"] = result.get("website") or place.get("website")
+                place["phone"] = result.get("international_phone_number") or result.get("formatted_phone_number") or place.get("phone")
                 place["business_status"] = result.get("business_status", "OPERATIONAL")
-                place["google_maps_url"] = result.get("url", place.get("google_maps_url"))
+                place["google_maps_url"] = result.get("url") or place.get("google_maps_url")
+                place["opening_hours"] = result.get("opening_hours")
         except Exception:
             pass
         return place
 
     @classmethod
-    async def _discover_email_hunter(cls, client: httpx.AsyncClient, website: str) -> Optional[str]:
+    async def _discover_hunter_email(cls, client: httpx.AsyncClient, website: str) -> Optional[str]:
         api_key = getattr(settings, "HUNTER_IO_API_KEY", None)
         if not api_key:
             return None
@@ -194,28 +241,25 @@ class EnterpriseScraperEngine:
         return None
 
     @classmethod
-    async def _crawl_website_for_email(cls, client: httpx.AsyncClient, website: str) -> Optional[str]:
+    async def _crawl_website_email(cls, client: httpx.AsyncClient, website: str) -> Optional[str]:
         try:
             res = await client.get(website, timeout=5.0)
             if res.status_code == 200:
-                emails = re.findall(
-                    r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", res.text
-                )
-                filtered = [
+                emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", res.text)
+                clean_emails = [
                     e for e in emails 
-                    if not any(x in e.lower() for x in ["png", "jpg", "jpeg", "wix", "sentry"])
+                    if not any(x in e.lower() for x in ["png", "jpg", "svg", "wixpress", "sentry"])
                 ]
-                if filtered:
-                    return filtered[0]
+                if clean_emails:
+                    return clean_emails[0]
         except Exception:
             pass
         return None
 
     @classmethod
-    async def _validate_email_mx(cls, email: str) -> str:
+    async def _verify_email_mx(cls, email: str) -> str:
         domain = email.split("@")[-1]
         try:
-            # Asynchronous DNS MX Record Query
             proc = await asyncio.create_subprocess_exec(
                 "nslookup", "-type=MX", domain,
                 stdout=asyncio.subprocess.PIPE,
@@ -223,22 +267,48 @@ class EnterpriseScraperEngine:
             )
             stdout, _ = await proc.communicate()
             if "mail exchanger" in stdout.decode().lower():
-                return "VALID"
+                return "VERIFIED"
         except Exception:
             pass
         return "RISKY"
 
+    @classmethod
+    async def _audit_website_seo(cls, client: httpx.AsyncClient, website: str) -> dict:
+        audit = {"ssl": website.startswith("https"), "has_title": False, "has_meta": False, "seo_score": 0}
+        try:
+            res = await client.get(website, timeout=5.0)
+            if res.status_code == 200:
+                soup = BeautifulSoup(res.text, "html.parser")
+                audit["has_title"] = bool(soup.find("title"))
+                audit["has_meta"] = bool(soup.find("meta", attrs={"name": "description"}))
+                
+                score = 30
+                if audit["ssl"]: score += 30
+                if audit["has_title"]: score += 20
+                if audit["has_meta"]: score += 20
+                audit["seo_score"] = score
+        except Exception:
+            audit["seo_score"] = 20 if audit["ssl"] else 0
+        return audit
+
     @staticmethod
-    def _calculate_lead_score(place: dict) -> int:
+    def _compute_lead_score(place: dict, seo_audit: dict) -> int:
         score = 0
-        if place.get("website"):
-            score += 30
-        if place.get("verified_email"):
-            score += 35
-        if place.get("phone"):
-            score += 15
-        if place.get("google_rating", 0) >= 4.0:
-            score += 10
-        if place.get("reviews_count", 0) > 20:
-            score += 10
+        if place.get("website"): score += 25
+        if place.get("verified_email"): score += 35
+        if place.get("phone"): score += 15
+        if place.get("google_rating", 0) >= 4.0: score += 15
+        if seo_audit.get("seo_score", 0) >= 50: score += 10
         return min(score, 100)
+
+    @staticmethod
+    def _deduplicate(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        seen = set()
+        deduped = []
+        for r in records:
+            key = r.get("google_place_id") or r.get("website") or r.get("company_name", "").lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(r)
+        return deduped

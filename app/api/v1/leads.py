@@ -1,15 +1,15 @@
 import uuid
 from typing import Optional
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 
 from app.db.session import get_db
-from app.models.enterprise_lead import Lead, EmailValidationStatus
+from app.models.enterprise_lead import Lead, EmailStatusEnum
 from app.schemas.lead import PaginatedLeadsResponse
 from app.services.enterprise_scraper import EnterpriseScraperEngine
 
-router = APIRouter(prefix="/leads", tags=["Enterprise Intelligence Pipeline"])
+router = APIRouter(prefix="/leads", tags=["Live Business Search"])
 
 
 @router.get("/search", response_model=PaginatedLeadsResponse)
@@ -21,11 +21,14 @@ async def search_leads(
     country: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    target_keyword = keyword.strip() if keyword else "Services"
-    target_city = city.strip() if city else "New York"
-    target_country = country.strip() if country else "United States"
+    target_keyword = keyword.strip() if keyword else ""
+    target_city = city.strip() if city else ""
+    target_country = country.strip() if country else ""
 
-    # Strict multi-parameter country & city isolation filter
+    if not target_keyword or not target_city or not target_country:
+        return PaginatedLeadsResponse(total=0, page=page, limit=limit, leads=[])
+
+    # Location Filter
     base_filter = and_(
         Lead.is_deleted == False,
         Lead.country.ilike(f"%{target_country}%"),
@@ -38,18 +41,18 @@ async def search_leads(
 
     query_stmt = select(Lead).where(base_filter)
     result = await db.execute(query_stmt.limit(limit))
-    existing_db_leads = result.scalars().all()
+    existing_leads = result.scalars().all()
 
-    # Trigger Live Multi-Source Extraction if local isolated DB records are lower than limit
-    if len(existing_db_leads) < limit:
-        extracted_leads = await EnterpriseScraperEngine.run_live_pipeline(
+    # Trigger Live Pipeline if DB cache is incomplete
+    if len(existing_leads) < limit:
+        extracted_records = await EnterpriseScraperEngine.run_live_pipeline(
             keyword=target_keyword,
             city=target_city,
             country=target_country,
             limit=limit,
         )
 
-        for item in extracted_leads:
+        for item in extracted_records:
             dup_check = select(Lead).where(
                 and_(
                     Lead.is_deleted == False,
@@ -66,7 +69,7 @@ async def search_leads(
                     website=item.get("website"),
                     phone=item.get("phone"),
                     verified_email=item.get("verified_email"),
-                    email_status=item.get("email_status", EmailValidationStatus.UNKNOWN),
+                    email_status=item.get("email_status", EmailStatusEnum.NOT_FOUND),
                     address=item.get("address"),
                     city=target_city,
                     country=target_country,
@@ -83,7 +86,7 @@ async def search_leads(
 
         await db.commit()
 
-    # Query filtered live persisted records
+    # Query Final Persisted Leads
     count_stmt = select(func.count()).select_from(select(Lead).where(base_filter).subquery())
     total_records = (await db.execute(count_stmt)).scalar_one()
 
