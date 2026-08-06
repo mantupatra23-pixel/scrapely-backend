@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
 
         alter_queries = [
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS country VARCHAR(100) DEFAULT 'United States' NOT NULL;",
+            "ALTER TABLE leads ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;"
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS city VARCHAR(255) DEFAULT 'New York' NOT NULL;",
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_place_id VARCHAR(255);",
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_score INTEGER DEFAULT 85 NOT NULL;",
