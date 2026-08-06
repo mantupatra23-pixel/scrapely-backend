@@ -5,10 +5,8 @@ from sqlalchemy import select, func, and_
 
 from app.db.session import get_db
 from app.models.lead import Lead
-from app.schemas.lead import PaginatedLeadsResponse, LeadResponse
+from app.schemas.lead import PaginatedLeadsResponse
 from app.services.scraper import GlobalScraperEngine
-from app.auth.dependencies import get_current_user
-from app.models.user import User
 
 router = APIRouter(prefix="/leads", tags=["Global Lead Intelligence"])
 
@@ -22,7 +20,6 @@ async def search_leads(
     country: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
     target_keyword = keyword or search or "Services"
     target_city = city or "New York"
