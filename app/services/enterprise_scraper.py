@@ -1,8 +1,7 @@
-import asyncio
+import os
 import re
 from typing import List, Dict, Any
 import httpx
-from app.config.settings import settings
 
 
 class EnterpriseScraperEngine:
@@ -19,23 +18,28 @@ class EnterpriseScraperEngine:
         cls, keyword: str, city: str, country: str, limit: int = 20
     ) -> List[Dict[str, Any]]:
         country_cfg = cls.SUPPORTED_COUNTRIES.get(country, {"gl": "in", "prefix": "+91"})
-        serp_key = getattr(settings, "SERPAPI_KEY", None)
+        
+        # Read directly from OS Environment Variable set in Render
+        serp_key = os.getenv("SERPAPI_KEY", "").strip()
         raw_leads: List[Dict[str, Any]] = []
 
         # ============================================================
-        # STAGE 1: Try SerpAPI Google Maps Engine
+        # STAGE 1: Real Google Maps Search via SerpAPI
         # ============================================================
         if serp_key:
+            print(f"[Scraper Engine] SERPAPI_KEY detected. Searching Google Maps for '{keyword}' in {city}, {country}...")
             try:
                 raw_leads = await cls._fetch_serpapi_google_maps(keyword, city, country, country_cfg, limit, serp_key)
             except Exception as e:
-                print(f"[SerpAPI Error]: {e}")
+                print(f"[SerpAPI Fetch Error]: {e}")
+        else:
+            print("[Scraper Engine] SERPAPI_KEY not found in OS environment.")
 
         # ============================================================
-        # STAGE 2: If SerpAPI missing/failed -> Direct OpenStreetMap Engine (100% Real Live Data)
+        # STAGE 2: OpenStreetMap Real Places Fallback
         # ============================================================
         if not raw_leads:
-            print("[Scraper Engine] SerpAPI key missing or empty response. Running direct OpenStreetMap Engine...")
+            print("[Scraper Engine] Falling back to direct OpenStreetMap live engine...")
             try:
                 raw_leads = await cls._fetch_overpass_osm(keyword, city, country, country_cfg, limit)
             except Exception as e:
@@ -111,7 +115,6 @@ class EnterpriseScraperEngine:
     async def _fetch_overpass_osm(
         cls, keyword: str, city: str, country: str, country_cfg: dict, limit: int
     ) -> List[Dict[str, Any]]:
-        """100% Real Live Places Extraction Engine via OpenStreetMap Overpass"""
         url = "https://overpass-api.de/api/interpreter"
         query = f"""
         [out:json][timeout:15];
@@ -134,10 +137,9 @@ class EnterpriseScraperEngine:
                     if not name or len(name) < 3:
                         continue
 
-                    # Filter based on broad match or category if tagged
                     clean_domain = re.sub(r"[^a-zA-Z0-9]", "", name.lower())
                     website = tags.get("website") or tags.get("contact:website")
-                    phone = tags.get("phone") or tags.get("contact:phone") or f"{country_cfg['prefix']} Verified Direct"
+                    phone = tags.get("phone") or tags.get("contact:phone")
                     email = tags.get("email") or tags.get("contact:email")
                     
                     if not email and website:
@@ -152,7 +154,7 @@ class EnterpriseScraperEngine:
                         "google_place_id": f"osm_live_{el.get('id')}",
                         "company_name": name,
                         "website": website or f"https://www.{clean_domain}.com",
-                        "phone": phone,
+                        "phone": phone or f"{country_cfg['prefix']} Direct Contact",
                         "verified_email": email or f"contact@{clean_domain}.com",
                         "email_status": "VERIFIED" if email else "NOT_FOUND",
                         "address": full_address,
