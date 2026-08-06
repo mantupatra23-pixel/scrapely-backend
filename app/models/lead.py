@@ -1,13 +1,14 @@
-from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, Text, JSON, ForeignKey
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
 import uuid
+from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, Text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql import func
 from app.db.session import Base
+
 
 class Lead(Base):
     __tablename__ = "leads"
 
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     google_place_id = Column(String(255), nullable=True)
     company_name = Column(String(255), nullable=False)
     website = Column(String(500), nullable=True)
@@ -18,7 +19,7 @@ class Lead(Base):
     country = Column(String(100), nullable=False, default="United States")
     category = Column(String(255), nullable=True)
     rating = Column(Float, default=4.5)
-    reviews_count = Column(Integer, default=0)
+    reviews_count = Column(Integer, default=30)
     source = Column(String(100), default="live_swarm")
     lead_score = Column(Integer, default=85)
     lead_priority = Column(String(50), default="HIGH")

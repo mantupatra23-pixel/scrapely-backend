@@ -1,3 +1,4 @@
+import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,9 +26,10 @@ async def search_leads(
     target_city = city or "New York"
     target_country = country or "United States"
 
-    # Strict isolation query by target location
+    # Strict multi-parameter filter
     base_filter = and_(
         Lead.is_deleted == False,
+        Lead.category.ilike(f"%{target_keyword}%"),
         Lead.country.ilike(f"%{target_country}%"),
         Lead.city.ilike(f"%{target_city}%"),
     )
@@ -36,7 +38,7 @@ async def search_leads(
     result = await db.execute(query_stmt.limit(limit))
     existing_db_leads = result.scalars().all()
 
-    # Trigger Live Extraction Pipeline if local DB records are insufficient
+    # Trigger Live Extraction if current keyword+location DB results are zero/low
     if len(existing_db_leads) < limit:
         extracted_leads, logs = await GlobalScraperEngine.extract_leads(
             keyword=target_keyword,
@@ -46,7 +48,6 @@ async def search_leads(
         )
 
         for item in extracted_leads:
-            # PostgreSQL Deduplication Check
             dup_check = select(Lead).where(
                 and_(
                     Lead.is_deleted == False,
@@ -58,6 +59,7 @@ async def search_leads(
 
             if not exists:
                 new_lead = Lead(
+                    id=uuid.uuid4(),
                     google_place_id=item.get("google_place_id"),
                     company_name=item["company_name"],
                     website=item.get("website"),
@@ -79,7 +81,7 @@ async def search_leads(
 
         await db.commit()
 
-    # Execute Paginated Query
+    # Re-query filtered records
     count_stmt = select(func.count()).select_from(select(Lead).where(base_filter).subquery())
     total_records = (await db.execute(count_stmt)).scalar_one()
 
