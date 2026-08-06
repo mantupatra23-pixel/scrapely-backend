@@ -30,6 +30,7 @@ async def lifespan(app: FastAPI):
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS workspace_id UUID;",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone_formatted VARCHAR(100);",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone_country_code VARCHAR(10);",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS source VARCHAR(100) DEFAULT 'GOOGLE_MAPS';", 
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS verified_email VARCHAR(255);",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_source VARCHAR(100);",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS state VARCHAR(255);",

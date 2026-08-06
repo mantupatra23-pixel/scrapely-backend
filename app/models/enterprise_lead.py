@@ -1,7 +1,7 @@
 import uuid
 from enum import Enum
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, DateTime, Text, 
+    Column, String, Integer, Float, Boolean, DateTime, Text,
     Index, Enum as SQLEnum, UniqueConstraint
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -37,7 +37,7 @@ class Lead(Base):
 
     # Core Place Intelligence
     google_place_id = Column(String(255), unique=True, index=True, nullable=False)
-    company_name = Column(String(255), nullable=False)
+    company_name = Column(String(255), nullable=False, index=True)
     website = Column(String(500), index=True, nullable=True)
     phone = Column(String(100), index=True, nullable=True)
     phone_formatted = Column(String(100), nullable=True)
@@ -46,18 +46,21 @@ class Lead(Base):
     # Verified Contact Intelligence
     verified_email = Column(String(255), index=True, nullable=True)
     email_status = Column(
-        SQLEnum(EmailStatusEnum, name="emailstatusenum"), 
-        default=EmailStatusEnum.NOT_FOUND, 
+        SQLEnum(EmailStatusEnum, name="emailstatusenum"),
+        default=EmailStatusEnum.NOT_FOUND,
         nullable=False
     )
     email_source = Column(String(100), nullable=True)
 
+    # Data Source Identifier
+    source = Column(String(100), default="GOOGLE_MAPS", nullable=False)
+
     # Strict Geolocation & Isolation Attributes
     address = Column(Text, nullable=True)
-    city = Column(String(255), index=True, nullable=False)
+    city = Column(String(255), index=True, nullable=True)
     state = Column(String(255), index=True, nullable=True)
     postal_code = Column(String(50), nullable=True)
-    country = Column(String(100), index=True, nullable=False)
+    country = Column(String(100), index=True, nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
 
@@ -70,9 +73,12 @@ class Lead(Base):
     google_maps_url = Column(Text, nullable=True)
 
     # Audit & Scoring Data
-    seo_score = Column(Integer, default=0)
-    lead_score = Column(Integer, default=0)
-    lead_priority = Column(SQLEnum(LeadPriorityEnum, name="leadpriorityenum"), default=LeadPriorityEnum.MEDIUM)
+    seo_score = Column(Integer, default=50)
+    lead_score = Column(Integer, default=50)
+    lead_priority = Column(
+        SQLEnum(LeadPriorityEnum, name="leadpriorityenum"),
+        default=LeadPriorityEnum.MEDIUM
+    )
     seo_audit_details = Column(JSONB, nullable=True)
 
     # System Tracking
