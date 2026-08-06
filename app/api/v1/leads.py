@@ -1,11 +1,11 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 
 from app.db.session import get_db
 from app.models.lead import Lead
-from app.schemas.lead import PaginatedLeadsResponse
+from app.schemas.lead import PaginatedLeadsResponse, LeadResponse
 from app.services.scraper import GlobalScraperEngine
 from app.auth.dependencies import get_current_user
 from app.models.user import User
@@ -39,7 +39,7 @@ async def search_leads(
     result = await db.execute(query_stmt.limit(limit))
     existing_db_leads = result.scalars().all()
 
-    # Trigger Live Extraction Pipeline if local DB results are insufficient
+    # Trigger Live Extraction Pipeline if local DB records are insufficient
     if len(existing_db_leads) < limit:
         extracted_leads, logs = await GlobalScraperEngine.extract_leads(
             keyword=target_keyword,
@@ -94,5 +94,5 @@ async def search_leads(
         total=total_records,
         page=page,
         limit=limit,
-        leads=final_leads
+        leads=final_leads,
     )

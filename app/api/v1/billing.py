@@ -1,8 +1,8 @@
+from datetime import datetime, timezone
+import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime, timezone
-import stripe
 
 from app.db.session import get_db
 from app.config.settings import settings
@@ -11,37 +11,40 @@ from app.models.billing import Subscription, SubscriptionStatus
 from app.schemas.billing import (
     CreateCheckoutSessionRequest,
     CheckoutSessionResponse,
-    CustomerPortalResponse
+    CustomerPortalResponse,
 )
 from app.services.stripe_service import StripeService
 from app.auth.dependencies import get_current_user
 
-router = APIRouter(prefix="/billing", tags=["Billing & Payments"])
+router = APIRouter(prefix="/billing", tags=["Billing"])
+
 
 @router.post("/checkout", response_model=CheckoutSessionResponse)
 async def create_checkout_session(
     req: CreateCheckoutSessionRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
-    Stripe Hosted Checkout URL generate karta hai self-serve payment ke liye.
+    Stripe Hosted Checkout URL generate karta hai settings/stripe_service se.
     """
     # Fetch User's Organization
-    stmt = select(Organization).where(Organization.id == current_user.id) # Simplified for 1:1 demo
+    stmt = select(Organization).where(Organization.id == current_user.organization_id)
     result = await db.execute(stmt)
     org = result.scalars().first()
 
     if not org:
-        # Auto-create org if missing
-        org = Organization(name=f"{current_user.full_name or 'User'}'s Org", slug=str(current_user.id))
+        # Auto-create organization if missing
+        org = Organization(name=f"{current_user.full_name}'s Org")
         db.add(org)
         await db.commit()
         await db.refresh(org)
 
     # Stripe Customer ID check/create
     if not org.stripe_customer_id:
-        customer_id = StripeService.create_customer(email=current_user.email, name=current_user.full_name)
+        customer_id = StripeService.create_customer(
+            email=current_user.email, name=org.name
+        )
         org.stripe_customer_id = customer_id
         await db.commit()
 
@@ -50,7 +53,7 @@ async def create_checkout_session(
         price_id=req.price_id,
         success_url=req.success_url,
         cancel_url=req.cancel_url,
-        org_id=str(org.id)
+        org_id=str(org.id),
     )
 
     return CheckoutSessionResponse(checkout_url=checkout_url)
@@ -60,22 +63,24 @@ async def create_checkout_session(
 async def get_customer_portal(
     return_url: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
-    User ko Stripe Customer Portal redirection link deta hai (Cancel/Upgrade sub).
+    User ko Stripe Customer Portal redirection link provide karta hai.
     """
-    stmt = select(Organization).where(Organization.id == current_user.id)
+    stmt = select(Organization).where(Organization.id == current_user.organization_id)
     result = await db.execute(stmt)
     org = result.scalars().first()
 
     if not org or not org.stripe_customer_id:
-        raise HTTPException(status_code=400, detail="No billing profile found")
+        raise HTTPException(
+            status_code=400, detail="No active Stripe customer profile found."
+        )
 
-    portal_url = StripeService.create_customer_portal(
-        customer_id=org.stripe_customer_id,
-        return_url=return_url
+    portal_url = StripeService.create_customer_portal_session(
+        customer_id=org.stripe_customer_id, return_url=return_url
     )
+
     return CustomerPortalResponse(portal_url=portal_url)
 
 
@@ -83,28 +88,28 @@ async def get_customer_portal(
 async def stripe_webhook(
     request: Request,
     stripe_signature: str = Header(None, alias="stripe-signature"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
-    Stripe Events Listener: Automatically activates or cancels user subscriptions.
+    Stripe Events Listener: Automatically activates/cancels subscriptions.
     """
     payload = await request.body()
-    
+
     try:
         event = stripe.Webhook.construct_event(
             payload, stripe_signature, settings.STRIPE_WEBHOOK_SECRET
         )
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Webhook Error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Webhook verification failed: {e}")
 
     event_type = event["type"]
     data = event["data"]["object"]
 
     # Handle Successful Subscription Payment
-    if event_type in ["checkout.session.completed", "customer.subscription.updated"]:
+    if event_type in ["checkout.session.completed", "invoice.payment_succeeded"]:
         stripe_sub_id = data.get("subscription") or data.get("id")
         customer_id = data.get("customer")
-        
+
         if stripe_sub_id and customer_id:
             # Find Org by Stripe Customer
             stmt = select(Organization).where(Organization.stripe_customer_id == customer_id)
@@ -112,22 +117,30 @@ async def stripe_webhook(
 
             if org:
                 # Update or Insert Subscription
-                sub_stmt = select(Subscription).where(Subscription.organization_id == org.id)
+                sub_stmt = select(Subscription).where(
+                    Subscription.organization_id == org.id
+                )
                 sub = (await db.execute(sub_stmt)).scalars().first()
 
-                period_end = datetime.fromtimestamp(data.get("current_period_end", 0), tz=timezone.utc)
-                
+                period_end_timestamp = data.get("current_period_end") or data.get("expires_at")
+                period_end = (
+                    datetime.fromtimestamp(period_end_timestamp, tz=timezone.utc)
+                    if period_end_timestamp
+                    else datetime.now(timezone.utc)
+                )
+
                 if not sub:
                     sub = Subscription(
                         organization_id=org.id,
                         stripe_subscription_id=stripe_sub_id,
-                        stripe_price_id=data.get("items", {}).get("data", [{}])[0].get("price", {}).get("id", "price_default"),
+                        stripe_price_id=data.get("price", {}).get("id", "default_price"),
                         status=SubscriptionStatus.ACTIVE,
-                        current_period_end=period_end
+                        current_period_end=period_end,
                     )
                     db.add(sub)
                 else:
                     sub.status = SubscriptionStatus.ACTIVE
+                    sub.stripe_subscription_id = stripe_sub_id
                     sub.current_period_end = period_end
 
                 await db.commit()
@@ -135,7 +148,9 @@ async def stripe_webhook(
     # Handle Subscription Cancellation
     elif event_type == "customer.subscription.deleted":
         stripe_sub_id = data.get("id")
-        sub_stmt = select(Subscription).where(Subscription.stripe_subscription_id == stripe_sub_id)
+        sub_stmt = select(Subscription).where(
+            Subscription.stripe_subscription_id == stripe_sub_id
+        )
         sub = (await db.execute(sub_stmt)).scalars().first()
 
         if sub:
@@ -143,3 +158,4 @@ async def stripe_webhook(
             await db.commit()
 
     return {"status": "success"}
+
