@@ -1,15 +1,15 @@
 import uuid
 from typing import Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 
 from app.db.session import get_db
-from app.models.lead import Lead
+from app.models.enterprise_lead import Lead, EmailValidationStatus
 from app.schemas.lead import PaginatedLeadsResponse
-from app.services.scraper import GlobalScraperEngine
+from app.services.enterprise_scraper import EnterpriseScraperEngine
 
-router = APIRouter(prefix="/leads", tags=["Global Lead Intelligence"])
+router = APIRouter(prefix="/leads", tags=["Enterprise Intelligence Pipeline"])
 
 
 @router.get("/search", response_model=PaginatedLeadsResponse)
@@ -19,20 +19,19 @@ async def search_leads(
     keyword: Optional[str] = Query(None),
     city: Optional[str] = Query(None),
     country: Optional[str] = Query(None),
-    search: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    target_keyword = keyword or search or "Services"
-    target_city = city or "New York"
-    target_country = country or "United States"
+    target_keyword = keyword.strip() if keyword else "Services"
+    target_city = city.strip() if city else "New York"
+    target_country = country.strip() if country else "United States"
 
-    # Strict location and query filter
+    # Strict multi-parameter country & city isolation filter
     base_filter = and_(
         Lead.is_deleted == False,
         Lead.country.ilike(f"%{target_country}%"),
         Lead.city.ilike(f"%{target_city}%"),
         or_(
-            Lead.category.ilike(f"%{target_keyword}%"),
+            Lead.primary_category.ilike(f"%{target_keyword}%"),
             Lead.company_name.ilike(f"%{target_keyword}%")
         )
     )
@@ -41,21 +40,20 @@ async def search_leads(
     result = await db.execute(query_stmt.limit(limit))
     existing_db_leads = result.scalars().all()
 
-    # Trigger Live Extraction if local DB records are missing
+    # Trigger Live Multi-Source Extraction if local isolated DB records are lower than limit
     if len(existing_db_leads) < limit:
-        extracted_leads, _ = await GlobalScraperEngine.extract_leads(
+        extracted_leads = await EnterpriseScraperEngine.run_live_pipeline(
             keyword=target_keyword,
             city=target_city,
             country=target_country,
-            target_limit=limit,
+            limit=limit,
         )
 
         for item in extracted_leads:
             dup_check = select(Lead).where(
                 and_(
                     Lead.is_deleted == False,
-                    Lead.country.ilike(f"%{target_country}%"),
-                    Lead.company_name == item["company_name"],
+                    Lead.google_place_id == item["google_place_id"]
                 )
             )
             exists = (await db.execute(dup_check)).scalars().first()
@@ -63,28 +61,29 @@ async def search_leads(
             if not exists:
                 new_lead = Lead(
                     id=uuid.uuid4(),
-                    google_place_id=item.get("google_place_id"),
+                    google_place_id=item["google_place_id"],
                     company_name=item["company_name"],
                     website=item.get("website"),
                     phone=item.get("phone"),
-                    email=item.get("email"),
-                    address=item.get("address", f"{target_city}, {target_country}"),
+                    verified_email=item.get("verified_email"),
+                    email_status=item.get("email_status", EmailValidationStatus.UNKNOWN),
+                    address=item.get("address"),
                     city=target_city,
                     country=target_country,
-                    category=target_keyword,  # Explicitly save search keyword as category
-                    rating=item.get("rating", 4.8),
-                    reviews_count=item.get("reviews_count", 42),
-                    source=item.get("source", "live_swarm"),
-                    lead_score=85,
-                    lead_priority="HIGH",
-                    seo_score=80,
-                    email_status="VERIFIED",
+                    latitude=item.get("latitude"),
+                    longitude=item.get("longitude"),
+                    google_rating=item.get("google_rating", 0.0),
+                    reviews_count=item.get("reviews_count", 0),
+                    primary_category=target_keyword.title(),
+                    google_maps_url=item.get("google_maps_url"),
+                    seo_score=item.get("seo_score", 0),
+                    lead_score=item.get("lead_score", 0)
                 )
                 db.add(new_lead)
 
         await db.commit()
 
-    # Execute Paginated Query for extracted records
+    # Query filtered live persisted records
     count_stmt = select(func.count()).select_from(select(Lead).where(base_filter).subquery())
     total_records = (await db.execute(count_stmt)).scalar_one()
 
