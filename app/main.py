@@ -18,28 +18,21 @@ from app.api.v1 import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create missing tables and apply auto-migrations
+    # Auto-inject missing columns directly into PostgreSQL DB
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-        # Auto-inject missing columns into PostgreSQL DB table safely
         alter_queries = [
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS country VARCHAR(100) DEFAULT 'United States' NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS city VARCHAR(255) DEFAULT 'New York' NOT NULL;",
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_place_id VARCHAR(255);",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_score INTEGER DEFAULT 0 NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_priority VARCHAR(20) DEFAULT 'LOW' NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS seo_score INTEGER DEFAULT 0 NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_status VARCHAR(30) DEFAULT 'UNKNOWN' NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS ssl_enabled BOOLEAN DEFAULT FALSE NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS mobile_friendly BOOLEAN DEFAULT FALSE NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS page_speed INTEGER DEFAULT 0 NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS meta_title TEXT;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS meta_description TEXT;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS robots_found BOOLEAN DEFAULT FALSE NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS sitemap_found BOOLEAN DEFAULT FALSE NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS schema_found BOOLEAN DEFAULT FALSE NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS domain_age INTEGER DEFAULT 0;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS ai_summary TEXT;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_audit_at TIMESTAMP WITH TIME ZONE;"
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_score INTEGER DEFAULT 85 NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_priority VARCHAR(50) DEFAULT 'HIGH' NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS seo_score INTEGER DEFAULT 80 NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_status VARCHAR(50) DEFAULT 'VERIFIED' NOT NULL;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS rating FLOAT DEFAULT 4.5;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS reviews_count INTEGER DEFAULT 30;",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS source VARCHAR(100) DEFAULT 'live_swarm';"
         ]
 
         for q in alter_queries:
@@ -58,7 +51,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Configuration
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -77,7 +70,7 @@ async def add_process_time_header(request: Request, call_next):
     return response
 
 
-# API Routers Mounting
+# Mounting API Routers
 app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(leads.router, prefix=settings.API_V1_STR)
 app.include_router(billing.router, prefix=settings.API_V1_STR)
@@ -92,10 +85,7 @@ async def root():
         "success": True,
         "application": settings.APP_NAME,
         "message": "Scrapely API Engine is running 🚀",
-        "version": "1.0.0",
         "status": "healthy",
-        "docs": "/docs",
-        "openapi": f"{settings.API_V1_STR}/openapi.json",
     }
 
 
