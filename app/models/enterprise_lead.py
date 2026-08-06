@@ -1,11 +1,10 @@
 import uuid
 from enum import Enum
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, DateTime, Text, JSON, 
-    ForeignKey, UniqueConstraint, Index, Enum as SQLEnum
+    Column, String, Integer, Float, Boolean, DateTime, Text, 
+    Index, Enum as SQLEnum
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.session import Base
 
@@ -25,6 +24,7 @@ class LeadPriority(str, Enum):
 
 class Lead(Base):
     __tablename__ = "leads"
+    __table_args__ = {'extend_existing': True}
 
     # Primary Identifier
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -47,7 +47,7 @@ class Lead(Base):
         default=EmailValidationStatus.UNKNOWN, 
         nullable=False
     )
-    email_source = Column(String(100), nullable=True)  # e.g., 'hunter.io', 'apollo', 'web_crawl'
+    email_source = Column(String(100), nullable=True)
     email_syntax_valid = Column(Boolean, default=False)
     email_mx_valid = Column(Boolean, default=False)
     email_smtp_valid = Column(Boolean, default=False)
@@ -81,14 +81,9 @@ class Lead(Base):
     lead_score = Column(Integer, default=0)
     lead_priority = Column(SQLEnum(LeadPriority), default=LeadPriority.MEDIUM)
     seo_audit_details = Column(JSONB, nullable=True)
-    tech_stack = Column(JSONB, nullable=True)  # BuiltWith / Wappalyzer
+    tech_stack = Column(JSONB, nullable=True)
 
     # Meta Management
     is_deleted = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        Index("idx_geo_isolation", "country", "city", "primary_category"),
-        UniqueConstraint("google_place_id", name="uq_google_place_id"),
-    )
