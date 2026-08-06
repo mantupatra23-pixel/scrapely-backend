@@ -18,29 +18,31 @@ from app.api.v1 import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Auto-inject missing columns directly into PostgreSQL DB
+    # Base tables initialization
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-        alter_queries = [
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS country VARCHAR(100) DEFAULT 'United States' NOT NULL;",
-            "ALTER TABLE leads ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;"
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS city VARCHAR(255) DEFAULT 'New York' NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_place_id VARCHAR(255);",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_score INTEGER DEFAULT 85 NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_priority VARCHAR(50) DEFAULT 'HIGH' NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS seo_score INTEGER DEFAULT 80 NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_status VARCHAR(50) DEFAULT 'VERIFIED' NOT NULL;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS rating FLOAT DEFAULT 4.5;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS reviews_count INTEGER DEFAULT 30;",
-            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS source VARCHAR(100) DEFAULT 'live_swarm';"
-        ]
+    # Safe isolated column auto-injections
+    alter_queries = [
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS country VARCHAR(100) DEFAULT 'United States';",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS city VARCHAR(255) DEFAULT 'New York';",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_place_id VARCHAR(255);",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_score INTEGER DEFAULT 85;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_priority VARCHAR(50) DEFAULT 'HIGH';",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS seo_score INTEGER DEFAULT 80;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_status VARCHAR(50) DEFAULT 'VERIFIED';",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS rating FLOAT DEFAULT 4.5;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS reviews_count INTEGER DEFAULT 30;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS source VARCHAR(100) DEFAULT 'live_swarm';",
+        "ALTER TABLE leads ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;"
+    ]
 
-        for q in alter_queries:
-            try:
+    for q in alter_queries:
+        try:
+            async with engine.begin() as conn:
                 await conn.execute(text(q))
-            except Exception as e:
-                print(f"[Auto-Migration Log] {e}")
+        except Exception:
+            pass
 
     yield
 
@@ -52,7 +54,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -71,7 +72,6 @@ async def add_process_time_header(request: Request, call_next):
     return response
 
 
-# Mounting API Routers
 app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(leads.router, prefix=settings.API_V1_STR)
 app.include_router(billing.router, prefix=settings.API_V1_STR)
