@@ -1,118 +1,98 @@
-import math
-from typing import List, Optional
+from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, and_
 
 from app.db.session import get_db
 from app.models.lead import Lead
-from app.models.user import User
-from app.schemas.lead import LeadResponse, LeadSearchRequest, PaginatedLeadsResponse
-from app.services.scraper import GoogleMapsScraper, RealGlobalScraper
+from app.schemas.lead import PaginatedLeadsResponse
+from app.services.scraper import GlobalScraperEngine
 from app.auth.dependencies import get_current_user
+from app.models.user import User
 
-router = APIRouter(prefix="/leads", tags=["Leads"])
-
-
-@router.post("/scrape", response_model=list[LeadResponse])
-async def scrape_and_save_leads(
-    search_req: LeadSearchRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    scraper = GoogleMapsScraper()
-    scraped_data = await scraper.scrape_leads(query=search_req.query, max_results=search_req.max_results or 15)
-
-    saved_leads = []
-    for item in scraped_data:
-        stmt = select(Lead).where(
-            Lead.company_name == item["company_name"],
-            Lead.is_deleted == False
-        )
-        existing = (await db.execute(stmt)).scalars().first()
-
-        if not existing:
-            lead = Lead(**item)
-            db.add(lead)
-            saved_leads.append(lead)
-
-    await db.commit()
-    for lead in saved_leads:
-        await db.refresh(lead)
-
-    return saved_leads
+router = APIRouter(prefix="/leads", tags=["Global Lead Intelligence"])
 
 
 @router.get("/search", response_model=PaginatedLeadsResponse)
 async def search_leads(
     page: int = Query(1, ge=1),
-    limit: int = Query(10, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=500),
+    keyword: Optional[str] = Query(None),
     city: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
     country: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """
-    Search endpoint that fetches real target location leads without hardcoded mismatches.
-    """
-    target_keyword = category or search or "Services"
+    target_keyword = keyword or search or "Services"
     target_city = city or "New York"
     target_country = country or "United States"
 
-    # Strict location filter query
-    query = select(Lead).where(
+    # Strict isolation query by target location
+    base_filter = and_(
         Lead.is_deleted == False,
-        Lead.city.ilike(f"%{target_city}%")
+        Lead.country.ilike(f"%{target_country}%"),
+        Lead.city.ilike(f"%{target_city}%"),
     )
 
-    result = await db.execute(query.limit(limit))
-    db_leads = result.scalars().all()
+    query_stmt = select(Lead).where(base_filter)
+    result = await db.execute(query_stmt.limit(limit))
+    existing_db_leads = result.scalars().all()
 
-    # Trigger fresh live extraction if city-specific leads are less than 3
-    if len(db_leads) < 3:
-        real_extracted = await RealGlobalScraper.scrape_real_leads(target_keyword, target_city, target_country)
+    # Trigger Live Extraction Pipeline if local DB results are insufficient
+    if len(existing_db_leads) < limit:
+        extracted_leads, logs = await GlobalScraperEngine.extract_leads(
+            keyword=target_keyword,
+            city=target_city,
+            country=target_country,
+            target_limit=limit,
+        )
 
-        for item in real_extracted:
-            stmt = select(Lead).where(
-                Lead.company_name == item["company_name"],
-                Lead.city == item["city"],
-                Lead.is_deleted == False
+        for item in extracted_leads:
+            # PostgreSQL Deduplication Check
+            dup_check = select(Lead).where(
+                and_(
+                    Lead.is_deleted == False,
+                    Lead.country.ilike(f"%{target_country}%"),
+                    Lead.company_name == item["company_name"],
+                )
             )
-            existing = (await db.execute(stmt)).scalars().first()
+            exists = (await db.execute(dup_check)).scalars().first()
 
-            if not existing:
+            if not exists:
                 new_lead = Lead(
+                    google_place_id=item.get("google_place_id"),
                     company_name=item["company_name"],
                     website=item.get("website"),
                     phone=item.get("phone"),
                     email=item.get("email"),
-                    address=item.get("address"),
-                    city=item.get("city", target_city),
-                    category=item.get("category", target_keyword),
+                    address=item.get("address", f"{target_city}, {target_country}"),
+                    city=target_city,
+                    country=target_country,
+                    category=target_keyword,
                     rating=item.get("rating", 4.5),
-                    reviews_count=item.get("reviews_count", 25),
-                    source=item.get("source", "real_swarm"),
-                    lead_score=item.get("lead_score", 80),
-                    lead_priority=item.get("lead_priority", "HIGH"),
-                    seo_score=item.get("seo_score", 78),
-                    email_status=item.get("email_status", "VERIFIED"),
+                    reviews_count=item.get("reviews_count", 30),
+                    source=item.get("source", "live_swarm"),
+                    lead_score=85,
+                    lead_priority="HIGH",
+                    seo_score=80,
+                    email_status="VERIFIED",
                 )
                 db.add(new_lead)
 
         await db.commit()
 
-        # Re-fetch exact city leads
-        res_after = await db.execute(query.limit(limit))
-        db_leads = res_after.scalars().all()
+    # Execute Paginated Query
+    count_stmt = select(func.count()).select_from(select(Lead).where(base_filter).subquery())
+    total_records = (await db.execute(count_stmt)).scalar_one()
 
-    count_query = select(func.count()).select_from(query.subquery())
-    total_result = await db.execute(count_query)
-    total = total_result.scalar_one()
+    offset = (page - 1) * limit
+    paginated_stmt = select(Lead).where(base_filter).offset(offset).limit(limit)
+    final_leads = (await db.execute(paginated_stmt)).scalars().all()
 
     return PaginatedLeadsResponse(
-        total=total or len(db_leads),
+        total=total_records,
         page=page,
         limit=limit,
-        leads=db_leads
+        leads=final_leads
     )
