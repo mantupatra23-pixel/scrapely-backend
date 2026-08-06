@@ -18,8 +18,6 @@ class EnterpriseScraperEngine:
         cls, keyword: str, city: str, country: str, limit: int = 20
     ) -> List[Dict[str, Any]]:
         country_cfg = cls.SUPPORTED_COUNTRIES.get(country, {"gl": "in", "prefix": "+91"})
-        
-        # Read directly from OS Environment Variable set in Render
         serp_key = os.getenv("SERPAPI_KEY", "").strip()
         raw_leads: List[Dict[str, Any]] = []
 
@@ -27,19 +25,15 @@ class EnterpriseScraperEngine:
         # STAGE 1: Real Google Maps Search via SerpAPI
         # ============================================================
         if serp_key:
-            print(f"[Scraper Engine] SERPAPI_KEY detected. Searching Google Maps for '{keyword}' in {city}, {country}...")
             try:
                 raw_leads = await cls._fetch_serpapi_google_maps(keyword, city, country, country_cfg, limit, serp_key)
             except Exception as e:
                 print(f"[SerpAPI Fetch Error]: {e}")
-        else:
-            print("[Scraper Engine] SERPAPI_KEY not found in OS environment.")
 
         # ============================================================
         # STAGE 2: OpenStreetMap Real Places Fallback
         # ============================================================
         if not raw_leads:
-            print("[Scraper Engine] Falling back to direct OpenStreetMap live engine...")
             try:
                 raw_leads = await cls._fetch_overpass_osm(keyword, city, country, country_cfg, limit)
             except Exception as e:
@@ -94,6 +88,8 @@ class EnterpriseScraperEngine:
                         "phone": phone,
                         "verified_email": email,
                         "email_status": "VERIFIED" if email else "NOT_FOUND",
+                        "email_source": "SERP_SCRAPER",
+                        "source": "GOOGLE_MAPS",  # <--- CRITICAL FIX: Explicit Source Field
                         "address": address,
                         "city": city,
                         "country": country,
@@ -157,6 +153,8 @@ class EnterpriseScraperEngine:
                         "phone": phone or f"{country_cfg['prefix']} Direct Contact",
                         "verified_email": email or f"contact@{clean_domain}.com",
                         "email_status": "VERIFIED" if email else "NOT_FOUND",
+                        "email_source": "OSM_ENGINE",
+                        "source": "OPENSTREETMAP",  # <--- CRITICAL FIX: Explicit Source Field
                         "address": full_address,
                         "city": city,
                         "country": country,
