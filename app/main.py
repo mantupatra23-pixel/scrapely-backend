@@ -25,6 +25,7 @@ async def lifespan(app: FastAPI):
     # Auto-Migration Pipeline
     migration_queries = [
         "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'emailstatusenum') THEN CREATE TYPE emailstatusenum AS ENUM ('VALID', 'VERIFIED', 'INVALID', 'RISKY', 'NOT_FOUND'); END IF; END $$;",
+        "ALTER TABLE leads ALTER COLUMN source SET DEFAULT 'GOOGLE_MAPS';",
         "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'leadpriorityenum') THEN CREATE TYPE leadpriorityenum AS ENUM ('HIGH', 'MEDIUM', 'LOW'); END IF; END $$;",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS workspace_id UUID;",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone_formatted VARCHAR(100);",

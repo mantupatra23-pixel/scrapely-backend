@@ -5,11 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 
 from app.db.session import get_db
-from app.models.enterprise_lead import Lead, EmailStatusEnum
+from app.models.enterprise_lead import Lead, EmailStatusEnum, LeadPriorityEnum
 from app.schemas.lead import PaginatedLeadsResponse
 from app.services.enterprise_scraper import EnterpriseScraperEngine
 
-router = APIRouter(prefix="/leads", tags=["Live Business Search"])
+router = APIRouter(prefix="/leads", tags=["Live Business Intelligence Engine"])
 
 
 @router.get("/search", response_model=PaginatedLeadsResponse)
@@ -59,7 +59,7 @@ async def search_leads(
                     Lead.google_place_id == item["google_place_id"]
                 )
             )
-            exists = (await db.execute(dup_check)).scalars().first()
+            exists = (await db.execute(dup_check)).scalar_one_or_none()
 
             if not exists:
                 new_lead = Lead(
@@ -69,7 +69,9 @@ async def search_leads(
                     website=item.get("website"),
                     phone=item.get("phone"),
                     verified_email=item.get("verified_email"),
-                    email_status=item.get("email_status", EmailStatusEnum.NOT_FOUND),
+                    email_status=item.get("email_status", "NOT_FOUND"),
+                    email_source=item.get("email_source", "LIVE_SCRAPER"),
+                    source=item.get("source") or "GOOGLE_MAPS",  # <--- CRITICAL FIX: Mandatory Non-Null Source
                     address=item.get("address"),
                     city=target_city,
                     country=target_country,
@@ -77,18 +79,18 @@ async def search_leads(
                     longitude=item.get("longitude"),
                     google_rating=item.get("google_rating", 0.0),
                     reviews_count=item.get("reviews_count", 0),
-                    primary_category=target_keyword.title(),
+                    primary_category=target_keyword,
                     google_maps_url=item.get("google_maps_url"),
-                    seo_score=item.get("seo_score", 0),
-                    lead_score=item.get("lead_score", 0)
+                    seo_score=item.get("seo_score", 50),
+                    lead_score=item.get("lead_score", 50)
                 )
                 db.add(new_lead)
 
         await db.commit()
 
     # Query Final Persisted Leads
-    count_stmt = select(func.count()).select_from(select(Lead).where(base_filter).subquery())
-    total_records = (await db.execute(count_stmt)).scalar_one()
+    count_stmt = select(func.count()).select_from(select(Lead.id).where(base_filter).subquery())
+    total_records = (await db.execute(count_stmt)).scalar() or 0
 
     offset = (page - 1) * limit
     paginated_stmt = select(Lead).where(base_filter).offset(offset).limit(limit)
