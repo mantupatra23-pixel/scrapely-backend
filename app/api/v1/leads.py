@@ -1,8 +1,8 @@
 import uuid
 from typing import Optional
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, or_
 
 from app.db.session import get_db
 from app.models.lead import Lead
@@ -26,21 +26,24 @@ async def search_leads(
     target_city = city or "New York"
     target_country = country or "United States"
 
-    # Strict multi-parameter filter
+    # Strict location and query filter
     base_filter = and_(
         Lead.is_deleted == False,
-        Lead.category.ilike(f"%{target_keyword}%"),
         Lead.country.ilike(f"%{target_country}%"),
         Lead.city.ilike(f"%{target_city}%"),
+        or_(
+            Lead.category.ilike(f"%{target_keyword}%"),
+            Lead.company_name.ilike(f"%{target_keyword}%")
+        )
     )
 
     query_stmt = select(Lead).where(base_filter)
     result = await db.execute(query_stmt.limit(limit))
     existing_db_leads = result.scalars().all()
 
-    # Trigger Live Extraction if current keyword+location DB results are zero/low
+    # Trigger Live Extraction if local DB records are missing
     if len(existing_db_leads) < limit:
-        extracted_leads, logs = await GlobalScraperEngine.extract_leads(
+        extracted_leads, _ = await GlobalScraperEngine.extract_leads(
             keyword=target_keyword,
             city=target_city,
             country=target_country,
@@ -68,9 +71,9 @@ async def search_leads(
                     address=item.get("address", f"{target_city}, {target_country}"),
                     city=target_city,
                     country=target_country,
-                    category=target_keyword,
-                    rating=item.get("rating", 4.5),
-                    reviews_count=item.get("reviews_count", 30),
+                    category=target_keyword,  # Explicitly save search keyword as category
+                    rating=item.get("rating", 4.8),
+                    reviews_count=item.get("reviews_count", 42),
                     source=item.get("source", "live_swarm"),
                     lead_score=85,
                     lead_priority="HIGH",
@@ -81,7 +84,7 @@ async def search_leads(
 
         await db.commit()
 
-    # Re-query filtered records
+    # Execute Paginated Query for extracted records
     count_stmt = select(func.count()).select_from(select(Lead).where(base_filter).subquery())
     total_records = (await db.execute(count_stmt)).scalar_one()
 
