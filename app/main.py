@@ -6,7 +6,7 @@ from sqlalchemy import text
 
 from app.config.settings import settings
 from app.db.session import engine, Base
-from app.models.enterprise_lead import Lead
+from app.models import Lead
 from app.api.v1 import (
     auth,
     leads,
@@ -19,9 +19,49 @@ from app.api.v1 import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize enterprise database tables safely
+    # 1. Base table structure initialization
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # 2. Dynamic Auto-Migration Queries for Enterprise Schema Alignment
+    alter_queries = [
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS workspace_id UUID;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone_formatted VARCHAR(100);",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone_country_code VARCHAR(10);",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_mobile BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS has_whatsapp BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS verified_email VARCHAR(255);",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_source VARCHAR(100);",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_syntax_valid BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_mx_valid BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_smtp_valid BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_is_disposable BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_is_catch_all BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_is_role_based BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS state VARCHAR(255);",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS postal_code VARCHAR(50);",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS latitude FLOAT;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS longitude FLOAT;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_rating FLOAT DEFAULT 0.0;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS business_status VARCHAR(100) DEFAULT 'OPERATIONAL';",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS opening_hours JSONB;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS primary_category VARCHAR(255);",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS secondary_categories JSONB;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_maps_url TEXT;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS directions_url TEXT;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS photos_url TEXT;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS business_description TEXT;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS seo_audit_details JSONB;",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS tech_stack JSONB;",
+        "ALTER TABLE leads ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;"
+    ]
+
+    for q in alter_queries:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(q))
+        except Exception as e:
+            pass
 
     yield
 
@@ -33,7 +73,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -52,7 +91,6 @@ async def add_process_time_header(request: Request, call_next):
     return response
 
 
-# Mount Routers
 app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(leads.router, prefix=settings.API_V1_STR)
 app.include_router(billing.router, prefix=settings.API_V1_STR)
