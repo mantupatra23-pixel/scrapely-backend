@@ -6,6 +6,7 @@ from sqlalchemy import text
 
 from app.config.settings import settings
 from app.db.session import engine, Base
+from app.models.enterprise_lead import Lead
 from app.api.v1 import (
     auth,
     leads,
@@ -18,31 +19,9 @@ from app.api.v1 import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Base tables initialization
+    # Initialize enterprise database tables safely
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-    # Safe isolated column auto-injections
-    alter_queries = [
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS country VARCHAR(100) DEFAULT 'United States';",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS city VARCHAR(255) DEFAULT 'New York';",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_place_id VARCHAR(255);",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_score INTEGER DEFAULT 85;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_priority VARCHAR(50) DEFAULT 'HIGH';",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS seo_score INTEGER DEFAULT 80;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_status VARCHAR(50) DEFAULT 'VERIFIED';",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS rating FLOAT DEFAULT 4.5;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS reviews_count INTEGER DEFAULT 30;",
-        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS source VARCHAR(100) DEFAULT 'live_swarm';",
-        "ALTER TABLE leads ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;"
-    ]
-
-    for q in alter_queries:
-        try:
-            async with engine.begin() as conn:
-                await conn.execute(text(q))
-        except Exception:
-            pass
 
     yield
 
@@ -54,6 +33,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -72,6 +52,7 @@ async def add_process_time_header(request: Request, call_next):
     return response
 
 
+# Mount Routers
 app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(leads.router, prefix=settings.API_V1_STR)
 app.include_router(billing.router, prefix=settings.API_V1_STR)
@@ -85,7 +66,7 @@ async def root():
     return {
         "success": True,
         "application": settings.APP_NAME,
-        "message": "Scrapely API Engine is running 🚀",
+        "message": "Scrapely Enterprise Engine is running 🚀",
         "status": "healthy",
     }
 
