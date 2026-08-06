@@ -51,6 +51,13 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
 
+    # Clear old legacy/hardcoded test leads from PostgreSQL
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("DELETE FROM leads WHERE google_place_id LIKE 'yelp_%' OR google_place_id LIKE 'osm_%' OR google_place_id LIKE 'custom_%' OR company_name LIKE '%Dentists in%';"))
+    except Exception:
+        pass
+
     yield
 
 
@@ -91,6 +98,6 @@ app.include_router(intelligence.router, prefix=settings.API_V1_STR)
 async def root():
     return {
         "success": True,
-        "application": "Scrapely.ai Live Enterprise Engine",
+        "application": "Scrapely.ai Live Enterprise",
         "status": "healthy",
     }
