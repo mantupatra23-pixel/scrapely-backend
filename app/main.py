@@ -26,6 +26,7 @@ async def lifespan(app: FastAPI):
     # 2. Dynamic Auto-Migration Queries for Enterprise Schema Alignment
     alter_queries = [
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS workspace_id UUID;",
+        "ALTER TYPE emailvalidationstatus ADD VALUE IF NOT EXISTS 'VERIFIED';"
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone_formatted VARCHAR(100);",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone_country_code VARCHAR(10);",
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_mobile BOOLEAN DEFAULT FALSE;",

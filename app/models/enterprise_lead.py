@@ -11,6 +11,7 @@ from app.db.session import Base
 
 class EmailValidationStatus(str, Enum):
     VALID = "VALID"
+    VERIFIED = "VERIFIED"
     INVALID = "INVALID"
     RISKY = "RISKY"
     UNKNOWN = "UNKNOWN"
